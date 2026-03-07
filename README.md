@@ -1,4 +1,4 @@
-# Prompt Forge
+# Prompt Forge v3
 
 A Dockerized AI prompt engineering workstation. Type a rough idea in **Quick mode** for an instant reformat, or switch to **Structured mode** to build a precision prompt using industry frameworks — powered entirely by your local Ollama instance.
 
@@ -13,12 +13,16 @@ Browser (port 3030)
 prompt-forge container  (Node 20 Alpine / Express)
     ├── GET  /api/health    → liveness probe
     ├── GET  /api/models    → proxies Ollama /api/tags
-    ├── POST /api/analyze   → non-streaming: extracts framework fields from raw text
-    └── POST /api/reformat  → SSE streaming: quick reformat OR structured assembly
+    ├── POST /api/analyze   → non-streaming: extracts fields from raw intent
+    └── POST /api/reformat  → SSE streaming: Quick | Structured | Visual
+          ├── mode: quick             → single-shot reformat
+          ├── mode: structured        → text framework assembly
+          └── mode: visual
+                ├── visualType: image → platform-specific image prompt
+                └── visualType: video → platform-specific video prompt
     │
     ▼
 Ollama (host or container, port 11434)
-    └── any pulled model (llama3, mistral, phi3, qwen, etc.)
 ```
 
 ---
@@ -45,20 +49,43 @@ Reasoning + Acting. The LLM alternates `Thought → Action → Observation` loop
 
 ---
 
-## Workflow
+## Modes
 
-**Quick mode** (default):
-1. Type your rough request in the textarea
-2. Select an output style (Precise / Step-by-Step / Concise / Creative / Debug)
-3. Click **Forge Prompt** or press `Ctrl+Enter`
+### Quick
+Raw text → optimized prompt. Five styles: Precise, Step-by-Step, Concise, Creative, Debug.
 
-**Structured mode**:
-1. Switch to **Structured** tab
-2. Enter your raw intent in the top field
-3. Select a framework tab (COSTAR, RISEN, RTF, CoT, Few-Shot, ReAct)
-4. Click **Auto-Fill Fields** — the LLM reads your intent and populates the fields
-5. Review and edit any field
-6. Click **Forge Prompt** — the LLM assembles the final prompt from the fields
+### Structured — Text Frameworks
+| Framework | Best for |
+|---|---|
+| COSTAR | Business, content, instructional — full behavioral control |
+| RISEN | Agentic, task-driven — clear persona + scoped constraints |
+| RTF | Lean code generation, narrow-scope tasks |
+| Chain of Thought | Complex multi-step reasoning |
+| Few-Shot | Consistent output, classification, transformation |
+| ReAct | Agentic Thought/Action/Observation loops |
+
+### Visual — Image (6 platforms)
+Universal · Midjourney · DALL-E 3 · SD / Auto1111 · Flux · Firefly
+
+### Visual — Video (6 platforms)
+Universal · Sora · Runway Gen-3 · Pika · Kling · Luma
+
+---
+
+## Language Selection
+
+An **EN / ES** toggle in the action bar controls output language for all modes and Auto-Fill.
+
+- **EN (default):** All output in English.
+- **ES:** All output in Spanish. For Visual modes, platform-specific technical syntax terms (e.g. `--ar`, `--v`, `masterpiece`, `dolly`, `pan`) remain in English because AI image/video generators require them as-is.
+
+The selected language is sent as `outputLang` in every `/api/reformat` and `/api/analyze` request. On the server, `addLangInstruction()` appends a Spanish language directive to the assembled system prompt when `outputLang === 'es'`.
+
+---
+
+## Token Counter
+
+A live counter at the bottom of the output panel shows **approximate tokens** and **characters** as the prompt streams in. Tokens are estimated using the standard ~4 chars/token approximation. Resets to zero when the output is cleared.
 
 ---
 
@@ -105,34 +132,36 @@ prompt-forge/
 ### `docker-compose.yml`
 ### `Dockerfile`
 ### `package.json`
+> `node-fetch` is pinned to `^2.x` (CommonJS). v3+ is ESM-only — do not upgrade without converting `server.js` to ES module syntax.
 ### `server.js`
 ### `public/index.html`
 
 ## Code Review Notes
 
-### New endpoint: `/api/analyze`
-Non-streaming. Sends raw intent + selected framework to Ollama with `stream: false`, requesting a JSON object with the framework's field keys. The response is stripped of potential markdown fences (```` ```json ```` wrappers some models add) before parsing. If JSON parsing fails, a `raw_fallback` string is returned to the client which surfaces a clear error rather than silently failing.
+### Language system — `addLangInstruction(systemPrompt, outputLang, isVisual)`
+Single helper function on the server. Returns the system prompt unchanged when `outputLang !== 'es'` (zero cost, no branching in callers). When Spanish is requested it appends a directive as the final bullet in the system prompt so it takes highest priority. The `isVisual` flag adds an exception clause preserving English for platform-specific technical syntax keywords — without this, Midjourney `--ar 16:9` or Stable Diffusion `(masterpiece:1.3)` tags would be translated and break the generator.
 
-### Dual-guard: `isStreaming` + `isAnalyzing`
-Both flags must be false before any LLM call proceeds. The `forge()` function checks `isStreaming || isAnalyzing`, and `autofill()` checks `isAnalyzing || isStreaming`. Both are reset in `finally` blocks so a network error or stream error never leaves the UI permanently locked.
+Wired into all five system prompt assembly points:
+- `/api/analyze` (Auto-Fill field values)
+- `/api/reformat` quick branch
+- `/api/reformat` structured framework branch
+- `/api/reformat` visual image branch
+- `/api/reformat` visual video branch
 
-### XSS safety in `appendToken`
-All token output uses `outputContent.textContent = currentText` — never `innerHTML`. The cursor span is appended via `createElement`, not string injection. The shimmer loading HTML and placeholder HTML are static strings we control — only the streaming token data goes through `textContent`.
+### Token counter
+`updateTokenCounter(text)` uses `Math.ceil(text.length / 4)` — the standard GPT-family approximation. Called in `startStreaming()` (reset to 0), `appendToken()` (live update every token), `finishStreaming()` (final count), and `clearOutput()` (reset to 0). DOM refs `tokCount` and `charCountOut` are fetched once at init. The counter is displayed in a sticky `.output-footer` bar that sits between `output-scroll` and the action bar, always visible regardless of scroll position.
+
+### `isStreaming` + `isAnalyzing` dual guards
+Both `forge()` and `autofill()` check both flags before proceeding and reset their own flag in a `finally` block. Prevents double-forge, forge-during-autofill, autofill-during-streaming, and permanent lock on any network error.
 
 ### SSE buffer split
-The stream reader retains `buffer = lines.pop()` across `reader.read()` calls to handle NDJSON boundaries that land mid-TCP-chunk. This prevents partial-line parse errors silently corrupting the output.
+`buffer = lines.pop()` retains any incomplete trailing line across `reader.read()` calls, preventing partial-JSON parse errors when NDJSON boundaries land mid-TCP-chunk.
 
-### All stream error paths close `res.end()`
-Four paths in `/api/reformat`: the `!ollamaRes.ok` check, `body.on('error')`, and the outer `catch` (which also wraps its own `res.write`+`res.end` in a try/catch to handle the race where headers haven't been sent yet). No path leaves a connection hanging.
+### XSS safety
+All streamed content goes through `outputContent.textContent = currentText` — never `innerHTML`. The blinking cursor `<span>` is created via `createElement`.
+
+### All stream error paths call `res.end()`
+Four paths: `!ollamaRes.ok` early return, `body.on('error')`, `body.on('end')`, and the outer `catch` (wrapped in its own try/catch to handle the race where `flushHeaders` hasn't fired yet).
 
 ### `node-fetch` v2 pin
-Intentional. v3+ is ESM-only. `require('node-fetch')` breaks on v3. Do not upgrade without converting `server.js` to `import` syntax.
-
-### Field shimmer during auto-fill
-Fields receive the `analyzing` CSS class during the `/api/analyze` call, which applies a shimmer animation. The class is always removed in both the `try` success path and the `catch` error path, so a failed request never leaves fields permanently grayed out.
-
-### Framework field definitions are frontend-only
-`FRAMEWORKS` in `index.html` drives both the UI (field rendering, labels, tips, placeholders) and the payload sent to `/api/reformat`. The backend `frameworkFields` object in `server.js` is used only by `/api/analyze` to instruct the LLM which JSON keys to return. These two objects must stay in sync if frameworks are added or renamed.
-
-### Model note for Auto-Fill
-`/api/analyze` uses `stream: false` and requests raw JSON output. Smaller models (e.g. `phi3:mini`, `gemma:2b`) sometimes ignore the JSON-only instruction and wrap output in prose or markdown. The markdown fence stripper catches the most common case. For best results, use a 7B+ instruction-following model (e.g. `llama3`, `mistral`, `qwen2.5`).
+Intentional. v3+ is ESM-only and breaks `require('node-fetch')`.
