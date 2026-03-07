@@ -1,4 +1,4 @@
-# Prompt Forge v2 — Complete Reference
+# Prompt Forge
 
 A Dockerized AI prompt engineering workstation. Type a rough idea in **Quick mode** for an instant reformat, or switch to **Structured mode** to build a precision prompt using industry frameworks — powered entirely by your local Ollama instance.
 
