@@ -1,5 +1,6 @@
+name: prompt-forge-v3
 # ──────────────────────────────────────────────────────────────────────────────
-# Prompt Forge v2 — AI prompt reformatter with structured framework mode
+# Prompt Forge v3 — AI prompt reformatter with structured framework mode
 #
 # QUICK START:
 #   docker compose up -d --build
