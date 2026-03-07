@@ -1,0 +1,46 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Prompt Forge v2 — AI prompt reformatter with structured framework mode
+#
+# QUICK START:
+#   docker compose up -d --build
+#   Open http://localhost:3030
+#
+# OLLAMA NETWORK OPTIONS — edit OLLAMA_URL below:
+#   Option A (default): host machine / Docker Desktop
+#   Option B: named Docker network  → set container name, uncomment networks:
+#   Option C: remote IP
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  prompt-forge:
+    build: .
+    container_name: prompt-forge
+    restart: unless-stopped
+    ports:
+      - "3030:3030"
+    environment:
+      OLLAMA_URL: "http://host.docker.internal:11434"
+      # OLLAMA_URL: "http://ollama:11434"
+      # OLLAMA_URL: "http://192.168.1.100:11434"
+      PORT: "3030"
+
+    # Required for host.docker.internal on Linux Docker Engine
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    # Uncomment if Ollama is on a named Docker network:
+    # networks:
+    #   - default
+    #   - ollama_network
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3030/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+# networks:
+#   ollama_network:
+#     external: true
+#     name: ollama_network
