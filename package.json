@@ -1,6 +1,6 @@
 {
   "name": "prompt-forge",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "description": "AI prompt reformatter with Quick, Structured, and Visual (Image/Video) modes, powered by local Ollama LLMs",
   "main": "server.js",
   "scripts": {
