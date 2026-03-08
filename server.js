@@ -2,17 +2,88 @@ const express = require('express');
 const fetch   = require('node-fetch');
 const cors    = require('cors');
 const path    = require('path');
+const fs      = require('fs');
 
 const app        = express();
 const PORT       = process.env.PORT || 3030;
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://host.docker.internal:11434';
+
+// ── Persistent log setup ───────────────────────────────────────────────
+const DATA_DIR  = process.env.DATA_DIR || path.join(__dirname, 'data');
+const LOG_FILE  = path.join(DATA_DIR, 'logs.jsonl');
+const MAX_LOG_ENTRIES = 2000;
+
+// Ensure data directory exists on startup
+try {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+} catch (e) {
+  console.error('Could not create data dir:', e.message);
+}
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', ollama: OLLAMA_URL, version: '4.0.0' });
+  res.json({ status: 'ok', ollama: OLLAMA_URL, version: '4.0.0', logFile: LOG_FILE });
+});
+
+// ── GET /api/logs  — return stored log entries (newest first) ──────────
+app.get('/api/logs', (req, res) => {
+  try {
+    if (!fs.existsSync(LOG_FILE)) return res.json({ entries: [] });
+    const raw     = fs.readFileSync(LOG_FILE, 'utf8').trim();
+    if (!raw) return res.json({ entries: [] });
+    const entries = raw.split('\n')
+      .filter(Boolean)
+      .map(line => { try { return JSON.parse(line); } catch { return null; } })
+      .filter(Boolean)
+      .reverse();                       // newest first for UI
+    res.json({ entries });
+  } catch (err) {
+    console.error('GET /api/logs error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/logs  — append one or more entries ──────────────────────
+app.post('/api/logs', (req, res) => {
+  try {
+    const entries = Array.isArray(req.body) ? req.body : [req.body];
+    const lines   = entries
+      .filter(e => e && e.level && e.message)
+      .map(e => JSON.stringify({ ts: e.ts || new Date().toISOString(), level: e.level, message: e.message }))
+      .join('\n');
+    if (!lines) return res.json({ ok: true, written: 0 });
+
+    fs.appendFileSync(LOG_FILE, lines + '\n', 'utf8');
+
+    // Rolling trim: keep at most MAX_LOG_ENTRIES lines
+    try {
+      const content = fs.readFileSync(LOG_FILE, 'utf8').trim();
+      const allLines = content.split('\n').filter(Boolean);
+      if (allLines.length > MAX_LOG_ENTRIES) {
+        const trimmed = allLines.slice(allLines.length - MAX_LOG_ENTRIES);
+        fs.writeFileSync(LOG_FILE, trimmed.join('\n') + '\n', 'utf8');
+      }
+    } catch (_) {}
+
+    res.json({ ok: true, written: entries.length });
+  } catch (err) {
+    console.error('POST /api/logs error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── DELETE /api/logs  — clear log file ────────────────────────────────
+app.delete('/api/logs', (req, res) => {
+  try {
+    fs.writeFileSync(LOG_FILE, '', 'utf8');
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('DELETE /api/logs error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/models', async (req, res) => {
@@ -260,6 +331,6 @@ Rules:
 });
 
 app.listen(PORT, () => {
-  console.log(`Prompt Forge v4 running on http://0.0.0.0:${PORT}`);
+  console.log(`Prompt Forge v4.1 running on http://0.0.0.0:${PORT}`);
   console.log(`Ollama endpoint: ${OLLAMA_URL}`);
 });
