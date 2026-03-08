@@ -3,6 +3,14 @@
 A Dockerized AI prompt engineering workstation powered entirely by your local Ollama instance. No external APIs. No keys required.
 
 ---
+![Top Languages Card](https://github-readme-stats.vercel.app)
+
+---
+---
+## Screenshot
+<img width="1308" height="737" alt="image" src="https://github.com/user-attachments/assets/642479b3-648c-4e55-bd9f-55029e07a161" />
+
+---
 
 ## Features
 
