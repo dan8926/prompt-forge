@@ -1,4 +1,4 @@
-# PromptForge v4.1
+<h1 style="text-align: center;">PromptForge v4.1</h1>
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)
@@ -8,6 +8,8 @@
 
 > **A self-hosted AI prompt engineering workstation that runs entirely on your local [Ollama](https://ollama.com) instance.**  
 > No cloud APIs. No API keys. No subscriptions. One `docker compose up` and you're live.
+
+<img width="1659" height="1018" alt="image" src="https://github.com/user-attachments/assets/295226cb-4615-4a79-81ff-f7cd1187d802" />
 
 ---
 
