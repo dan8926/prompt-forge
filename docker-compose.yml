@@ -1,6 +1,6 @@
-name: prompt-forge-v4
+name: prompt-forge-v4.1
 # ──────────────────────────────────────────────────────────────────────────────
-# Prompt Forge v4 — AI prompt reformatter with structured framework mode
+# Prompt Forge v4.1 — AI prompt reformatter
 #
 # QUICK START:
 #   docker compose up -d --build
@@ -24,19 +24,32 @@ services:
       # OLLAMA_URL: "http://ollama:11434"
       # OLLAMA_URL: "http://192.168.1.100:11434"
       PORT: "3030"
+      DATA_DIR: "/data"
+
+    # Persist event logs across container restarts and rebuilds
+    volumes:
+      - prompt-forge-data:/data
+
     # Required for host.docker.internal on Linux Docker Engine
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
     # Uncomment if Ollama is on a named Docker network:
     # networks:
     #   - default
     #   - ollama_network
+
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3030/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  prompt-forge-data:
+    name: prompt-forge-data
+    driver: local
 
 # networks:
 #   ollama_network:
