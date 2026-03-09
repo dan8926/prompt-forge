@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
-<title>Prompt Forge v4.1.1</title>
+<title>Prompt Forge v4.1.2</title>
 <style>
 
 /* ══════════════════════════════════════════════════════════════
-   FORGE STUDIO v4.1.1  ·  Design System  ·  Obsidian & Electric
+   FORGE STUDIO v4.1.2  ·  Design System  ·  Obsidian & Electric
    ══════════════════════════════════════════════════════════════ */
 
 /* ── Google Fonts ──────────────────────────────────────────── */
@@ -1217,7 +1217,7 @@ table.history-table { width: 100%; border-collapse: collapse; font-family: var(-
       </svg>
     </div>
     <div class="logo-wordmark">Prompt<em>Forge</em></div>
-    <span class="logo-badge">v4.1.1</span>
+    <span class="logo-badge">v4</span>
   </div>
 
   <div class="header-center">
@@ -1457,6 +1457,38 @@ table.history-table { width: 100%; border-collapse: collapse; font-family: var(-
 
 <script>
 // ════════════════════════════════════════════════════════════════════════
+// GLOBAL ERROR GUARDS
+//
+// These two handlers are the "last line of defence" — they catch any
+// uncaught exception or unhandled promise rejection that escapes all
+// try/catch blocks and route it into the event log so it is visible.
+//
+// Without them, a crash in a timer callback, an event listener, or a
+// dynamically-loaded module would produce a silent frozen UI.
+// ════════════════════════════════════════════════════════════════════════
+window.onerror = function(message, source, lineno, colno, error) {
+  // Guard: logEvent may not be defined yet if the error fires during parse
+  if (typeof logEvent === 'function') {
+    const loc = source ? ` (${source.split('/').pop()}:${lineno}:${colno})` : '';
+    logEvent('error', `Uncaught exception${loc}: ${message}`);
+  } else {
+    console.error('Uncaught exception (logEvent not ready):', message, source, lineno);
+  }
+  return false; // let default browser handler also run (shows in DevTools)
+};
+
+window.onunhandledrejection = function(event) {
+  const reason = event.reason instanceof Error
+    ? event.reason.message
+    : String(event.reason ?? 'Unknown rejection reason');
+  if (typeof logEvent === 'function') {
+    logEvent('error', `Unhandled promise rejection: ${reason}`);
+  } else {
+    console.error('Unhandled rejection (logEvent not ready):', reason);
+  }
+};
+
+// ════════════════════════════════════════════════════════════════════════
 // FRAMEWORK DEFINITIONS — 12 total
 // ════════════════════════════════════════════════════════════════════════
 const FRAMEWORKS = {
@@ -1632,6 +1664,45 @@ const VIDEO_PLATFORMS = [
 ];
 
 // ════════════════════════════════════════════════════════════════════════
+// CLIENT-SIDE FETCH WITH TIMEOUT
+//
+// loadModels() and autofill() use non-streaming fetch calls that have no
+// built-in deadline. If Ollama stalls (loading a large model, out of
+// memory, etc.) both functions hang indefinitely and the UI becomes
+// unresponsive with no feedback.
+//
+// FETCH_TIMEOUT_MS = 45 s — generous enough for slow hardware loading a
+// 13 B model, tight enough that a truly hung server surfaces an error
+// before the user gives up.
+// ════════════════════════════════════════════════════════════════════════
+const FETCH_TIMEOUT_MS = 45_000;
+
+/**
+ * fetch() wrapper with an AbortController deadline.
+ * Throws a TimeoutError if the request takes longer than timeoutMs.
+ * @param {string} url
+ * @param {RequestInit} [options]
+ * @param {number} [timeoutMs]
+ * @returns {Promise<Response>}
+ */
+async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      const te = new Error(`Request timed out after ${timeoutMs / 1000}s — Ollama may be loading a large model`);
+      te.name = 'TimeoutError';
+      throw te;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
 // STATE
 // ════════════════════════════════════════════════════════════════════════
 let currentMode       = 'quick';
@@ -1745,36 +1816,64 @@ function renderLogEntry(entry) {
   return div;
 }
 
+// Track whether we've already warned about server log being unreachable,
+// so we don't flood the in-memory log with repeated persistence warnings.
+let _logPersistFailed = false;
+
 function logEvent(level, message) {
   const entry = { ts: new Date(), level, message };
   eventLog.unshift(entry);
   if (eventLog.length > MAX_LOG) eventLog.pop();
   logBody.insertBefore(renderLogEntry(entry), logBody.firstChild);
-  // Persist to server (fire-and-forget)
+
+  // Persist to server — fire-and-forget, but surface the first failure
+  // so the user knows the log drawer contents are not being saved to disk.
   fetch('/api/logs', {
-    method: 'POST',
+    method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ts: entry.ts.toISOString(), level, message })
-  }).catch(() => {});
+    body:    JSON.stringify({ ts: entry.ts.toISOString(), level, message }),
+  }).catch(persistErr => {
+    if (!_logPersistFailed) {
+      _logPersistFailed = true;
+      // Append directly to DOM — calling logEvent() here would recurse
+      const warning = { ts: new Date(), level: 'warn',
+        message: `Server log persistence unavailable: ${persistErr.message}. Events are shown here but not saved to disk.` };
+      eventLog.unshift(warning);
+      if (eventLog.length > MAX_LOG) eventLog.pop();
+      logBody.insertBefore(renderLogEntry(warning), logBody.firstChild);
+    }
+  });
 }
 
 async function loadPersistedLogs() {
   try {
-    const res  = await fetch('/api/logs');
-    const data = await res.json();
-    const entries = (data.entries || []);
+    const res = await fetchWithTimeout('/api/logs', {}, 8_000);
+    if (!res.ok) {
+      // Non-200 from /api/logs — server is running but log read failed
+      logEvent('warn', `Could not load persisted logs: server returned ${res.status}`);
+      return;
+    }
+    const data    = await res.json();
+    const entries = data.entries || [];
     if (!entries.length) return;
-    // Render oldest-to-newest so newest ends up at top (insertBefore firstChild)
+
+    // Render oldest-to-newest so newest ends at top (insertBefore firstChild)
     for (let i = entries.length - 1; i >= 0; i--) {
       const e   = entries[i];
       const div = renderLogEntry(e);
-      div.style.opacity = '0.65'; // visually distinguish persisted entries
+      div.style.opacity = '0.65'; // visually distinguish persisted vs live entries
       logBody.insertBefore(div, logBody.firstChild);
       eventLog.unshift(e);
     }
     if (eventLog.length > MAX_LOG) eventLog.length = MAX_LOG;
-  } catch (_) {
-    // Server may not be available yet — silently skip
+
+    if (data.skipped > 0) {
+      logEvent('warn', `Persisted log: skipped ${data.skipped} corrupt line(s) on server`);
+    }
+    logEvent('info', `Loaded ${entries.length} persisted log entries`);
+  } catch (err) {
+    // Network failure or timeout — server may not be reachable yet on first load
+    logEvent('warn', `Could not load persisted logs: ${err.message}`);
   }
 }
 
@@ -2129,16 +2228,34 @@ function setOutputMeta(modeLabel, modeClass, detail, detailClass, model) {
 // ════════════════════════════════════════════════════════════════════════
 async function loadModels() {
   logEvent('info', 'Connecting to Ollama…');
+  setStatus('', 'connecting…');
+  modelSelect.innerHTML = '<option value="">Loading models…</option>';
+
   try {
-    const res  = await fetch('/api/models');
-    const data = await res.json();
+    // Use fetchWithTimeout so a stalled Ollama surfaces after FETCH_TIMEOUT_MS
+    const res = await fetchWithTimeout('/api/models');
+
+    // Check res.ok BEFORE calling res.json() — a 502 body may not be valid JSON
+    if (!res.ok) {
+      let serverMsg = `Server returned ${res.status}`;
+      try {
+        const errData = await res.json();
+        if (errData.error) serverMsg = errData.error;
+      } catch (_) {
+        // Body was not JSON — serverMsg stays as the status string
+      }
+      throw new Error(serverMsg);
+    }
+
+    const data   = await res.json();
     if (data.error) throw new Error(data.error);
+
     const models = data.models || [];
-    if (models.length === 0) throw new Error('No models found in Ollama');
+    if (models.length === 0) throw new Error('No models found in Ollama — pull at least one model with: ollama pull llama3');
 
     modelSelect.innerHTML = models.map(m => `<option value="${m.name}">${m.name}</option>`).join('');
 
-    // Default to first *-instruct model if available
+    // Default to first *-instruct model if available, otherwise first model
     const instructModel = models.find(m => /-instruct/i.test(m.name));
     if (instructModel) {
       modelSelect.value = instructModel.name;
@@ -2151,14 +2268,30 @@ async function loadModels() {
     forgeBtn.disabled    = false;
     autofillBtn.disabled = false;
     setFooter(`ready · ${modelSelect.value}`);
-    logEvent('success', `Loaded ${models.length} models`);
+    logEvent('success', `Loaded ${models.length} model(s)`);
 
   } catch (err) {
-    setStatus('error', 'ollama unreachable');
+    setStatus('error', 'offline');
+    // Show a Retry option inline — the user should not have to reload the page
     modelSelect.innerHTML = '<option value="">— cannot connect —</option>';
-    toast('error', 'Cannot reach Ollama → ' + err.message);
-    setFooter('error: ' + err.message);
-    logEvent('error', `Ollama unreachable: ${err.message}`);
+    const retryMsg = err.name === 'TimeoutError'
+      ? 'Ollama took too long to respond. It may be loading a model.'
+      : `Cannot reach Ollama: ${err.message}`;
+    toast('error', retryMsg + ' — tap Retry');
+    setFooter(`error · ${err.message}`);
+    logEvent('error', `loadModels failed: ${err.message}`);
+    // Inject a one-shot retry button into the model-wrap
+    const existing = document.getElementById('retryModelsBtn');
+    if (!existing) {
+      const btn = document.createElement('button');
+      btn.id = 'retryModelsBtn';
+      btn.className = 'hdr-btn';
+      btn.title = 'Retry Ollama connection';
+      btn.style.cssText = 'font-size:0.7rem;padding:0 8px;width:auto;color:var(--amber);border-color:var(--amber);';
+      btn.textContent = 'Retry';
+      btn.addEventListener('click', () => { btn.remove(); loadModels(); });
+      document.querySelector('.header-actions')?.prepend(btn);
+    }
   }
 }
 
@@ -2187,13 +2320,31 @@ async function autofill() {
   fieldDefs.forEach(f => { const el = document.getElementById(`field_${f.key}`); if (el) el.classList.add('analyzing'); });
 
   try {
-    const res  = await fetch('/api/analyze', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rawPrompt: raw, framework: analyzeFramework, model, outputLang: currentOutputLang })
+    // Use fetchWithTimeout — a stalled Ollama analysis will hang indefinitely otherwise
+    const res = await fetchWithTimeout('/api/analyze', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ rawPrompt: raw, framework: analyzeFramework, model, outputLang: currentOutputLang }),
     });
+
+    // Check res.ok BEFORE res.json() — a 502 body may not be valid JSON
+    if (!res.ok) {
+      let serverMsg = `Server returned ${res.status}`;
+      try {
+        const errData = await res.json();
+        if (errData.error) serverMsg = errData.error;
+      } catch (_) { /* body was not JSON */ }
+      throw new Error(serverMsg);
+    }
+
     const data = await res.json();
     fieldDefs.forEach(f => { const el = document.getElementById(`field_${f.key}`); if (el) el.classList.remove('analyzing'); });
     if (data.error) throw new Error(data.error);
+
+    // Surface server-side parse warnings to the user
+    if (data.warning) {
+      logEvent('warn', `Auto-fill warning: ${data.warning}`);
+    }
 
     if (data.fields && Object.keys(data.fields).length > 0) {
       const bt = isVisualFill ? (currentVType === 'image' ? 'img' : 'vid') : 'fw';
@@ -2267,16 +2418,32 @@ async function forge() {
   startStreaming();
 
   try {
-    const res = await fetch('/api/reformat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (!res.ok) throw new Error(`Server error ${res.status}`);
+    const res = await fetch('/api/reformat', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    });
+
+    // Read the actual error body — "Server error 502" is not actionable;
+    // "Cannot connect to Ollama at …" is.
+    if (!res.ok) {
+      let errMsg = `Server error ${res.status}`;
+      try {
+        const errData = await res.json();
+        if (errData.error) errMsg = errData.error;
+      } catch (_) { /* body was not JSON */ }
+      throw new Error(errMsg);
+    }
 
     const reader  = res.body.getReader();
     const decoder = new TextDecoder();
-    let buffer    = '';
+    let buffer        = '';
+    let streamAborted = false; // flag to break the outer while on fatal stream error
+    let parseWarned   = false; // log only the first malformed SSE frame per forge
 
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done || streamAborted) break;
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
       buffer = lines.pop();
@@ -2284,13 +2451,48 @@ async function forge() {
         if (!line.startsWith('data: ')) continue;
         try {
           const json = JSON.parse(line.slice(6));
-          if (json.error) { toast('error', json.error); logEvent('error', `Stream error: ${json.error}`); break; }
+          if (json.error) {
+            // Fatal stream error from the server — stop reading immediately
+            finishStreaming();
+            toast('error', json.error);
+            logEvent('error', `Stream error from server: ${json.error}`);
+            streamAborted = true;
+            break; // exits the for-loop; streamAborted exits the while on next iteration
+          }
           if (json.token) appendToken(json.token);
           if (json.done)  finishStreaming();
-        } catch (_) {}
+        } catch (parseErr) {
+          // Malformed SSE frame — log once per forge, then go quiet to avoid flooding
+          if (!parseWarned) {
+            parseWarned = true;
+            logEvent('warn', `Malformed SSE frame (suppressing further warnings): ${parseErr.message}`);
+          }
+        }
       }
     }
-    finishStreaming();
+
+    // If the stream was aborted by a server error, skip the success path entirely
+    if (streamAborted) {
+      // Output panel may have partial content — clear it so user is not misled
+      if (!currentText) {
+        clearOutput();
+      } else {
+        finishStreaming(); // keep partial output but remove cursor
+      }
+    } else {
+      finishStreaming();
+    }
+
+    // Guard: warn if the model produced no output at all
+    if (!streamAborted && currentText.trim().length === 0) {
+      toast('error', 'Model returned empty output. Try a different model or simplify your prompt.');
+      logEvent('warn', 'Forge produced empty output — model returned no tokens');
+      // Skip success path; don't record an empty forge in history
+      return;
+    }
+
+    // Skip success metrics on aborted streams
+    if (streamAborted) return;
 
     const duration = Date.now() - forgeStartTime;
     const tokens   = Math.ceil(currentText.length / 4);
@@ -2484,7 +2686,7 @@ renderVisualFields(currentVType);
 renderPlatforms(currentVType);
 updateForgeTheme();
 document.getElementById('quickMode').style.display = 'flex';
-logEvent('info', 'Prompt Forge v4.1.1 initialized');
+logEvent('info', 'Prompt Forge v4.1.2 initialized');
 loadPersistedLogs();
 loadModels();
 </script>
