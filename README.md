@@ -1,4 +1,4 @@
-<h1 style="text-align: center;">PromptForge v4.1.2</h1>
+<h1 style="text-align: center;">PromptForge</h1>
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)
