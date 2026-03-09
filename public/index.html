@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
-<title>Prompt Forge v4.1</title>
+<title>Prompt Forge v4.1.1</title>
 <style>
 
 /* ══════════════════════════════════════════════════════════════
-   FORGE STUDIO v4.1  ·  Design System  ·  Obsidian & Electric
+   FORGE STUDIO v4.1.1  ·  Design System  ·  Obsidian & Electric
    ══════════════════════════════════════════════════════════════ */
 
 /* ── Google Fonts ──────────────────────────────────────────── */
@@ -101,11 +101,36 @@
 
 /* ── Global Reset ──────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html { height: 100%; }
+/* FIX 1a: -webkit-fill-available makes html respect the VISIBLE viewport on
+   iOS Safari < 15.4, preventing layout from extending behind the toolbar.
+   FIX 1b: -webkit-text-size-adjust: 100% prevents iOS Safari from auto-scaling
+   font sizes when the device rotates to landscape. Without this, text in the
+   header and panels can reflow to larger sizes, pushing content off-screen. */
+html {
+  height: 100%;
+  height: -webkit-fill-available; /* iOS Safari pre-15.4: fill visible area only */
+  -webkit-text-size-adjust: 100%; /* iOS/Android: block landscape text inflation */
+  text-size-adjust: 100%;         /* Standard (Chrome 122+, Firefox 116+) */
+}
+/* FIX: Use a layered viewport-height stack so the body always fills exactly
+   the VISIBLE area on every browser:
+   1. height: 100vh       — old-browser fallback
+   2. height: -webkit-fill-available — iOS Safari < 15.4 (excludes browser chrome)
+   3. height: 100dvh      — modern: dynamic viewport height, shrinks/grows
+                            as the mobile browser toolbar shows/hides
+   overflow: hidden is correct for app-shell; content overflows inside
+   flex children that have their own overflow-y: auto.
+   overscroll-behavior: none prevents rubber-band bounce from propagating
+   past scrollable panels and revealing the raw body background. */
 body {
   font-family: var(--sans); background: var(--bg); color: var(--text);
-  min-height: 100vh; height: 100%; display: flex; flex-direction: column;
-  overflow: hidden; -webkit-font-smoothing: antialiased;
+  height: 100vh;                  /* Fallback: old browsers */
+  height: -webkit-fill-available; /* iOS Safari < 15.4 */
+  height: 100dvh;                 /* Modern: dynamic viewport unit */
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  overscroll-behavior: none; /* FIX: stop bounce from propagating to body */
+  -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
@@ -113,9 +138,14 @@ body {
 .bg-canvas {
   position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
 }
+/* FIX 5: will-change: transform promotes each orb to a dedicated GPU
+   compositing layer. The continuous 18s drift animation is then handled
+   entirely by the compositor thread, eliminating main-thread layout
+   recalculation that would cause jank on mobile. */
 .orb {
   position: absolute; border-radius: 50%; filter: blur(80px);
   animation: orb-drift 18s ease-in-out infinite;
+  will-change: transform; /* FIX 5: GPU layer — zero layout cost per frame */
 }
 .orb-1 {
   width: 700px; height: 700px; top: -200px; left: -150px;
@@ -146,6 +176,27 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 10px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border3); }
+
+/* ── Interactive element tap behaviour ─────────────────────── */
+/* FIX 2: touch-action: manipulation removes the 300 ms tap delay that older
+   Android and iOS browsers insert before firing click events. This prevents
+   a frustrating lag on the Forge, Auto-Fill, Clear, and mode buttons, and
+   stops the brief layout-shift window from causing mis-taps on mobile.
+   "manipulation" allows pan+zoom but blocks double-tap-to-zoom, which is
+   the safe choice for a fixed-layout app where double-tap has no semantic
+   meaning. The -webkit- prefix is required for iOS Safari < 13. */
+button,
+[role="tab"],
+[role="button"],
+select,
+.style-tab,
+.platform-btn,
+.mode-btn,
+.lang-btn,
+.vtype-btn {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent; /* FIX 2b: remove grey flash on iOS tap */
+}
 
 /* ══════════════════════════════════════════════════════════════
    HEADER
@@ -184,9 +235,12 @@ body {
   border-radius: var(--r-pill); padding: 2px 8px; letter-spacing: 0.06em;
 }
 
+/* FIX 3: min-width: 0 is required on flex children that contain shrinkable
+   content. Without it, the browser uses the intrinsic minimum width of
+   .model-wrap as the floor, which can overflow the header on narrow phones. */
 .header-center {
   flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center;
-  gap: 10px;
+  gap: 10px; overflow: hidden; /* FIX 3b: hard stop for any overflowing child */
 }
 .model-wrap {
   display: flex; align-items: center; gap: 8px;
@@ -199,7 +253,12 @@ body {
 select.model-select {
   flex: 1; background: transparent; color: var(--text); border: none; outline: none;
   padding: 8px 6px 8px 0; font-family: var(--mono); font-size: 0.72rem; font-weight: 500;
-  cursor: pointer; min-width: 0; appearance: none;
+  /* FIX 4: -webkit-appearance: none is required for iOS Safari/Chrome-on-iOS.
+     Without it, the browser draws its native picker widget, which overlaps
+     the custom model-wrap border and arrow, breaking the header layout. */
+  cursor: pointer; min-width: 0;
+  -webkit-appearance: none; /* iOS Safari, Chrome-on-iOS */
+  appearance: none;
 }
 .model-arrow {
   width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
@@ -279,14 +338,29 @@ select.model-select {
 .mode-btn.active[data-mode="structured"] { color: var(--cyan);   box-shadow: 0 2px 12px var(--cyan-glow), var(--shadow-sm); }
 .mode-btn.active[data-mode="visual"]     { color: var(--amber);  box-shadow: 0 2px 12px var(--amber-glow), var(--shadow-sm); }
 .mode-btn-icon { font-size: 0.8rem; }
+/* FIX 7: text-overflow + white-space: nowrap prevents dynamic hint text from
+   wrapping to a second line. A wrapped hint bar would push .panel-scroll down,
+   shortening it unpredictably and causing form fields to be cut off at the
+   bottom — especially visible on mobile. */
 .mode-hint-bar {
   font-family: var(--mono); font-size: 0.62rem; color: var(--muted);
   padding: 6px 12px; background: var(--surface2); border: 1px solid var(--border);
   border-radius: var(--r-sm); letter-spacing: 0.02em;
+  white-space: nowrap;      /* FIX 7: one line only */
+  overflow: hidden;          /* FIX 7: clip any overrun */
+  text-overflow: ellipsis;   /* FIX 7: show … when clipped */
 }
 
+/* FIX 6: min-height: 0 — Firefox default is min-height: auto on flex children,
+   preventing shrinkage below content height. Without this, .panel-scroll
+   ignores the parent grid row height and overflows the workspace.
+   overscroll-behavior-y: contain — stops iOS "rubber-band" momentum scroll
+   from propagating to the body when the panel reaches its scroll boundary,
+   which would otherwise reveal the raw body background. */
 .panel-scroll {
-  flex: 1; overflow-y: auto; overflow-x: hidden;
+  flex: 1; min-height: 0; /* FIX 6a: allow shrink in Firefox */
+  overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior-y: contain; /* FIX 6b: contain iOS bounce to this panel */
   padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 14px;
 }
 
@@ -533,7 +607,13 @@ select.fw-select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px var(--
 .meta-tag.t-v  { color: var(--violet); border-color: rgba(167,139,250,0.3); background: var(--violet-soft); }
 .meta-tag.t-lang { font-style: italic; }
 
-.output-scroll { flex: 1; overflow-y: auto; min-height: 0; }
+/* FIX 8: overscroll-behavior-y: contain — same rationale as .panel-scroll.
+   Reaching the top/bottom of a long forged prompt on iOS must not cause
+   the entire workspace to bounce. */
+.output-scroll {
+  flex: 1; overflow-y: auto; min-height: 0;
+  overscroll-behavior-y: contain; /* FIX 8: contain iOS bounce to output panel */
+}
 .output-content {
   padding: 22px 24px; font-family: var(--mono); font-size: 0.79rem;
   line-height: 1.75; white-space: pre-wrap; word-break: break-word;
@@ -704,7 +784,13 @@ select.fw-select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px var(--
    TOASTS
    ══════════════════════════════════════════════════════════════ */
 .toast {
-  position: fixed; bottom: 74px; right: 20px; z-index: 1000;
+  /* FIX: Use calc() so the toast floats above the command bar (≈64px)
+     plus a 10px gap, plus any home-indicator safe area that the command
+     bar itself has absorbed. Hard-coded 74px would place the toast
+     BEHIND the bar on notched iPhones. */
+  position: fixed;
+  bottom: calc(74px + env(safe-area-inset-bottom, 0px));
+  right: 20px; z-index: 1000;
   padding: 11px 16px; border-radius: var(--r-md);
   font-family: var(--mono); font-size: 0.7rem; line-height: 1.5;
   pointer-events: none; opacity: 0; transform: translateY(10px) scale(0.97);
@@ -741,19 +827,31 @@ select.fw-select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px var(--
 }
 [data-theme="light"] .drawer { background: rgba(248,250,255,0.97); }
 
+/* FIX: Replace static 100vh with layered dvh stack (same rationale as body).
+   Also account for right safe-area in landscape orientation (iPhone notch
+   appears on the right when holding the phone sideways). */
 .drawer-right {
-  top: 0; right: 0; width: min(620px, 100vw); height: 100vh;
+  top: 0; right: 0; width: min(620px, 100vw);
+  height: 100vh;                  /* Fallback */
+  height: -webkit-fill-available; /* iOS Safari < 15.4 */
+  height: 100dvh;                 /* Modern dynamic viewport */
   border-right: none; border-top: none; border-bottom: none;
   border-radius: var(--r-lg) 0 0 var(--r-lg);
   transform: translateX(100%);
+  /* FIX: safe-area-inset-right handles landscape-mode notch */
+  padding-right: env(safe-area-inset-right, 0px);
 }
 .drawer-right.open { transform: translateX(0); }
 
+/* FIX: The bottom drawer sits over the home indicator on iPhones using
+   viewport-fit=cover. Pad out the safe area at the bottom of the drawer
+   content so the last log entry is never occluded. */
 .drawer-bottom {
   bottom: 0; left: 0; right: 0; height: 300px;
   border-bottom: none; border-left: none; border-right: none;
   border-radius: var(--r-lg) var(--r-lg) 0 0;
   transform: translateY(100%);
+  padding-bottom: env(safe-area-inset-bottom, 0px); /* FIX: clear home indicator */
 }
 .drawer-bottom.open { transform: translateY(0); }
 
@@ -786,7 +884,13 @@ select.fw-select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px var(--
 }
 .drw-close:hover { color: var(--text); background: var(--glass-hover); }
 
-.drawer-body { flex: 1; overflow-y: auto; }
+/* FIX 9: overscroll-behavior-y: contain prevents drawer scroll from propagating
+   to the body, which is visible as a jarring full-page bounce on iOS when
+   scrolling through token history or event log entries. */
+.drawer-body {
+  flex: 1; overflow-y: auto;
+  overscroll-behavior-y: contain; /* FIX 9: contain bounce within drawer */
+}
 
 /* History table */
 .history-empty {
@@ -832,50 +936,205 @@ table.history-table { width: 100%; border-collapse: collapse; font-family: var(-
 .log-msg { color: var(--text); line-height: 1.55; word-break: break-all; }
 
 /* ══════════════════════════════════════════════════════════════
+   TABLET LANDSCAPE  (769px – 1024px)
+   At exactly 769px, the 50/50 grid gives each panel only ~380px.
+   The structured-mode framework fields and platform grids need at
+   least 340px to lay out without wrapping. A slight asymmetric
+   split (42/58) gives the output panel more breathing room while
+   still keeping the input panel functional.
+   ══════════════════════════════════════════════════════════════ */
+/* FIX 11a: tablet-landscape breakpoint — prevents 50/50 split from producing
+   columns too narrow for framework fields and platform button grids. */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .workspace {
+    grid-template-columns: 42% 58%; /* FIX 11a: asymmetric — output needs more room */
+  }
+  .model-wrap { max-width: 240px; }
+  .status-chip { display: none; } /* FIX 11a: hide at tablet to free header space */
+}
+
+/* ══════════════════════════════════════════════════════════════
    MOBILE  (≤ 768px)
    ══════════════════════════════════════════════════════════════ */
 @media (max-width: 768px) {
+
+  /* FIX: Proportional grid rows instead of "auto 1fr + max-height:48vh".
+     grid-template-rows: auto 1fr means the first row (left panel) takes
+     its natural height, capped by max-height — but several browsers
+     (notably Safari) don't honour max-height on grid items that are in
+     an "auto" track, so the left panel can expand to full content height
+     and crush the output panel. Explicit fractional rows give the layout
+     engine a deterministic split regardless of content size. */
   .workspace {
     grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
+    grid-template-rows: 46fr 54fr; /* 46 % input, 54 % output of workspace height */
     overflow: hidden;
+    /* FIX: ensure workspace itself never overflows body on short viewports */
+    min-height: 0;
   }
-  .left-panel {
-    border-right: none; border-bottom: 1px solid var(--border);
-    max-height: 48vh; overflow: hidden;
-  }
-  .right-panel { flex: 1; min-height: 0; }
 
-  .header { padding: 0 14px; gap: 8px; }
+  /* FIX: overflow: clip instead of overflow: hidden.
+     "hidden" creates a scroll container in some browsers, which can suppress
+     the child .panel-scroll element's scrollbar (the browser thinks the parent
+     is the scroll ancestor). "clip" only visually clips without creating a
+     scroll context, so .panel-scroll retains its own independent scroll. */
+  .left-panel {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    /* REMOVED: max-height: 48vh — grid rows now control height distribution */
+    overflow: hidden; /* FIX 10a: fallback for Safari < 16, Firefox < 81 */
+    overflow: clip;   /* FIX 10b: modern — visual clip only, no scroll-container side-effects */
+    min-height: 0;
+  }
+
+  /* Ensure right panel can always shrink to fill remaining grid cell */
+  .right-panel { min-height: 0; }
+
+  /* ── Header ── */
+  .header {
+    padding: 0 14px;
+    gap: 8px;
+    /* FIX: ensure header doesn't overflow on tiny viewports */
+    min-width: 0;
+  }
   .logo-badge { display: none; }
   .status-chip { display: none; }
-  .header-center { justify-content: flex-start; }
-  .model-wrap { max-width: 200px; }
+  .header-center { justify-content: flex-start; min-width: 0; }
+  .model-wrap { max-width: 180px; }
 
+  /* ── Left panel controls ── */
   .panel-header { padding: 10px 12px 0; }
   .mode-btn { font-size: 0.7rem; padding: 7px 6px; gap: 4px; }
   .mode-btn-icon { font-size: 0.72rem; }
+  /* Hide text labels; icons remain for compact display */
   .mode-btn .mode-btn-label { display: none; }
   .panel-scroll { padding: 10px 12px 12px; gap: 10px; }
-  .command-bar { padding: 8px 12px; gap: 6px; }
-  .forge-btn { flex: 1; justify-content: center; height: 42px; font-size: 0.78rem; }
-  .autofill-btn { flex: 1; justify-content: center; height: 42px; font-size: 0.72rem; }
-  .cmd-right { width: 100%; justify-content: space-between; }
-  .cmd-status { font-size: 0.58rem; max-width: 140px; }
-  .drawer-right { width: 100vw; border-radius: 0; }
-  .drawer-bottom { height: 55vh; }
-  .toast { left: 12px; right: 12px; bottom: 76px; }
+
+  /* FIX: flex-wrap: nowrap — prevent command bar from growing to a second
+     row, which would steal height from the workspace unpredictably.
+     All controls are kept on one line by shrinking buttons instead. */
+  .command-bar {
+    flex-wrap: nowrap;
+    padding: 8px 12px;
+    gap: 6px;
+    /* FIX: add left/right safe areas for iPhone landscape notch */
+    padding-left:  calc(12px + env(safe-area-inset-left, 0px));
+    padding-right: calc(12px + env(safe-area-inset-right, 0px));
+  }
+  .forge-btn {
+    flex: 1 1 0;        /* FIX: 1 1 0 = can grow AND shrink from zero basis */
+    min-width: 0;       /* FIX: allow shrinking below intrinsic width */
+    justify-content: center;
+    height: 42px;
+    padding: 0 10px;
+    font-size: 0.78rem;
+  }
+  .autofill-btn {
+    flex: 1 1 0;        /* match forge-btn flex behaviour */
+    min-width: 0;
+    justify-content: center;
+    height: 42px;
+    font-size: 0.72rem;
+    padding: 0 10px;
+  }
+  /* FIX: REMOVE width: 100% — that forced cmd-right to a second row.
+     Let it sit on the same line and shrink if needed. */
+  .cmd-right {
+    margin-left: auto;
+    flex-shrink: 1;
+    min-width: 0;
+    gap: 6px;
+  }
+  /* Hide the status text on mobile; not enough horizontal space */
+  .cmd-status { display: none; }
+
+  /* ── FIX: iOS auto-zoom prevention ──────────────────────────────
+     iOS Safari zooms in on any focused input with font-size < 16px.
+     This zoom disrupts the fixed app-shell layout and can cause
+     content to appear cut off after the zoom animation settles.
+     Setting 1rem (16px) on all form controls prevents the zoom
+     without touching the user-scalable viewport attribute (which
+     would harm accessibility). ───────────────────────────────── */
+  textarea.field-input,
+  input.field-input,
+  select.model-select,
+  select.fw-select {
+    font-size: 1rem; /* FIX: 16px minimum → no iOS auto-zoom on focus */
+  }
+
+  /* ── Drawers ── */
+  /* FIX: 100vw covers the full device width on mobile (correct). */
+  .drawer-right {
+    width: 100vw;
+    border-radius: 0;
+  }
+  /* FIX: replace 55vh with 55svh.
+     svh = Small Viewport Height: always the shortest possible viewport,
+     i.e. with the browser toolbar VISIBLE. This is the safe baseline —
+     the drawer will never be taller than the visible area at worst case. */
+  .drawer-bottom {
+    height: 55vh;   /* fallback */
+    height: 55svh;  /* FIX: small-viewport-height — stable floor when toolbar visible */
+  }
+
+  /* ── Toast ── */
+  /* FIX: toast bottom must track the command bar height.
+     The command bar is now always a single row (≈ 58px with 8px padding top/bottom
+     and 42px buttons). The safe area is already baked into padding-bottom via the
+     @supports block below. Add horizontal safe areas for landscape. */
+  .toast {
+    left:  calc(12px + env(safe-area-inset-left, 0px));
+    right: calc(12px + env(safe-area-inset-right, 0px));
+    /* bottom stays at the calc() value set in the base .toast rule */
+  }
+
   .output-content { padding: 16px 18px; font-size: 0.75rem; }
+
+  /* FIX 12: resize: none on mobile prevents the user from dragging the
+     textarea resize handle beyond the grid row boundary. If a user drags
+     the Quick-mode textarea taller than the 46fr grid row, the panel
+     overflows and the output panel is pushed completely off-screen. */
+  textarea.field-input { resize: none; }
 }
 
+/* ── Narrow phones (≤ 480px) ── */
 @media (max-width: 480px) {
   .vtype-btn span.vtype-label { display: none; }
   .platform-btn { font-size: 0.6rem; padding: 4px 10px; }
+
+  /* FIX: on the narrowest devices, shrink the clear-btn text so it
+     doesn't push the forge-btn below a usable minimum width. */
+  .clear-btn { padding: 0 10px; font-size: 0.72rem; }
 }
 
-/* ── Safe area for notched phones ── */
-@supports (padding-bottom: env(safe-area-inset-bottom)) {
-  .command-bar { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+/* ══════════════════════════════════════════════════════════════
+   SAFE AREA — comprehensive @supports block
+   Covers: command-bar bottom + horizontal, header horizontal,
+   drawer-right right, toast bottom.
+   Uses @supports to gracefully degrade on browsers that don't
+   understand env() (i.e. they keep the non-safe-area values).
+   ══════════════════════════════════════════════════════════════ */
+@supports (padding: env(safe-area-inset-bottom)) {
+
+  /* Command bar: bottom (home indicator) + horizontal (landscape notch) */
+  .command-bar {
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+
+  /* Header: horizontal padding expands in landscape so logo/controls
+     are never hidden behind the side notch on iPhone. */
+  .header {
+    padding-left:  calc(20px + env(safe-area-inset-left));
+    padding-right: calc(20px + env(safe-area-inset-right));
+  }
+
+  /* Toast always floats above the command bar including its safe-area height.
+     The base .toast rule already sets bottom: calc(74px + env(...)) but that
+     may not be parsed in older browsers — this @supports block ensures it runs
+     only when env() is actually supported. */
+  .toast {
+    bottom: calc(74px + env(safe-area-inset-bottom));
+  }
 }
 
 </style>
@@ -958,7 +1217,7 @@ table.history-table { width: 100%; border-collapse: collapse; font-family: var(-
       </svg>
     </div>
     <div class="logo-wordmark">Prompt<em>Forge</em></div>
-    <span class="logo-badge">v4.1</span>
+    <span class="logo-badge">v4.1.1</span>
   </div>
 
   <div class="header-center">
@@ -1585,15 +1844,26 @@ clearHistoryBtn.addEventListener('click', () => {
 // ════════════════════════════════════════════════════════════════════════
 // DRAWER CONTROLS
 // ════════════════════════════════════════════════════════════════════════
+/* FIX 13: openDrawer no longer needs to set body.style.overflow because
+   the CSS already declares overflow:hidden on body at all times. Setting
+   it redundantly in JS caused closeDrawer's body.style.overflow='' to
+   create a brief window (during the 0.3s close animation) where some
+   mobile browsers (Samsung Internet, older UC Browser) would momentarily
+   expose the body scroll, causing a visible flash of the background or a
+   jarring layout jump. Explicitly restoring 'hidden' on close is safer
+   than clearing to '' since it doesn't depend on CSS cascade timing. */
 function openDrawer(drawer, backdrop) {
   drawer.classList.add('open');
   backdrop.classList.add('open');
-  document.body.style.overflow = 'hidden';
+  /* body is already overflow:hidden via CSS — no JS override needed */
 }
 function closeDrawer(drawer, backdrop) {
   drawer.classList.remove('open');
   backdrop.classList.remove('open');
-  document.body.style.overflow = '';
+  /* FIX 13: explicitly re-assert hidden rather than clearing to '' to
+     prevent a flash-of-scrollable-body on buggy mobile browsers during
+     the 300ms drawer close transition. */
+  document.body.style.overflow = 'hidden';
 }
 historyBtn.addEventListener('click', () => { renderHistory(); openDrawer(historyDrawer, historyBackdrop); logEvent('info', 'Token history opened'); });
 historyClose.addEventListener('click', () => closeDrawer(historyDrawer, historyBackdrop));
@@ -1839,7 +2109,9 @@ function clearOutput() {
   outputContent.appendChild(placeholder);
   outputMeta.style.display = 'none';
   copyBtn.classList.remove('success');
-  copyBtn.textContent = '⎘';
+  /* FIX 14b: restore SVG in clearOutput() — same rationale as the copy handler.
+     textContent replaces the entire innerHTML; innerHTML preserves the SVG. */
+  copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
   updateTokenCounter('');
   setFooter('idle · ' + (modelSelect.value || 'no model'));
 }
@@ -1984,7 +2256,9 @@ async function forge() {
   forgeBtn.disabled = true;
   forgeBtn.textContent = 'Forging…';
   copyBtn.classList.remove('success');
-  copyBtn.textContent = '⎘';
+  /* FIX 14d: restore SVG icon before forge starts — same rationale as the other
+     copyBtn resets. textContent wipes innerHTML; use innerHTML to keep the SVG. */
+  copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
   setFooter(`streaming · ${model}`);
   logEvent('info', `Forge started · ${currentMode}${currentMode === 'structured' ? ` · ${currentFramework}` : ''} · ${model}`);
 
@@ -2186,7 +2460,13 @@ copyBtn.addEventListener('click', async () => {
     copyBtn.classList.add('success');
     copyBtn.textContent = '✓';
     toast('info', method === 'fallback' ? 'Copied (fallback method)' : 'Copied to clipboard');
-    setTimeout(() => { copyBtn.classList.remove('success'); copyBtn.textContent = '⎘'; }, 2000);
+    /* FIX 14: restore full SVG innerHTML. Using textContent = '⎘' replaces
+       the SVG with a plain Unicode glyph that renders inconsistently across
+       OS/browser combinations and reverts the button to a mismatched style. */
+    setTimeout(() => {
+      copyBtn.classList.remove('success');
+      copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    }, 2000);
   } else {
     toast('error', 'Copy failed — select text and use Ctrl+C / Cmd+C');
     logEvent('error', 'All clipboard methods failed');
@@ -2204,7 +2484,7 @@ renderVisualFields(currentVType);
 renderPlatforms(currentVType);
 updateForgeTheme();
 document.getElementById('quickMode').style.display = 'flex';
-logEvent('info', 'Prompt Forge v4.1 initialized');
+logEvent('info', 'Prompt Forge v4.1.1 initialized');
 loadPersistedLogs();
 loadModels();
 </script>
