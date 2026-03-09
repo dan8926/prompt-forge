@@ -6,7 +6,7 @@
 ![Ollama](https://img.shields.io/badge/powered%20by-Ollama-black)
 ![Version|90](https://img.shields.io/badge/version-4.1.2-brightgreen)
 
-> **A self-hosted AI prompt engineering workstation that runs entirely on your local [Ollama](https://ollama.com) instance.**  
+> **A self-hosted AI prompt engineering workstation that runs entirely on your local network and use your [Ollama](https://ollama.com) instance.**  
 > No cloud APIs. No API keys. No subscriptions. One `docker compose up` and you're live.   
 
 ---
