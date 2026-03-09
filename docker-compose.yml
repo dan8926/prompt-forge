@@ -1,6 +1,6 @@
-name: prompt-forge-v4.1
+name: prompt-forge-v4.1.1
 # ──────────────────────────────────────────────────────────────────────────────
-# Prompt Forge v4.1 — AI prompt reformatter
+# Prompt Forge v4.1.1 — AI prompt reformatter
 #
 # QUICK START:
 #   docker compose up -d --build
